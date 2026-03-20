@@ -3,401 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>同期型 3Dそろばん教室</title>
+    <title>同期型 3Dそろばん (マルチタッチ対応)</title>
     <style>
         @font-face { font-family: 'ABACUS2'; src: url('ABACUS2.ttf') format('truetype'); }
-        body { margin: 0; overflow: hidden; background-color: #f0f4f8; font-family: 'Rounded M+ 1c', 'Meiryo', sans-serif; touch-action: none; /* スマホのスクロールを防止 */ }
-        canvas { display: block; }
-
-        /* スタート画面（モード選択） */
-        #start-screen {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.95); z-index: 100;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-        }
-        .mode-btn {
-            font-size: 1.5rem; padding: 20px 40px; margin: 15px; border: none; border-radius: 12px;
-            cursor: pointer; color: white; font-weight: bold; width: 300px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.1s;
-        }
-        .mode-btn:active { transform: scale(0.95); }
-        #btn-main { background-color: #4299e1; }
-        #btn-sub { background-color: #48bb78; }
-
-        /* 通信情報・入力パネル */
-        #network-panel {
-            position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7);
-            color: white; padding: 10px; border-radius: 8px; z-index: 20; font-size: 0.9rem;
-            display: none;
-        }
-        #network-panel input, #network-panel button { padding: 5px; margin-top: 5px; }
-
-        /* 学習UI（メイン画面用） */
-        #ui-panel {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 600px; background-color: white; border: 4px solid #4a5568;
-            border-radius: 16px; padding: 20px; text-align: center; z-index: 10; display: none;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-        }
-        #teacher-message { font-size: 1.2rem; color: #2d3748; margin-bottom: 10px; font-weight: bold; }
-        #problem-display { font-family: 'ABACUS2', sans-serif; font-size: 4rem; color: #e53e3e; letter-spacing: 5px; }
-        #next-btn {
-            display: none; background-color: #ed8936; color: white; border: none; padding: 10px 24px;
-            font-size: 1.2rem; border-radius: 50px; cursor: pointer; margin-top: 10px;
-        }
-        #celebration {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            font-size: 5rem; color: #ed8936; font-weight: bold; opacity: 0; pointer-events: none; z-index: 30;
-            text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
-        }
+        body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
+        #start-screen { position: absolute; z-index: 100; width: 100%; height: 100%; background: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .mode-btn { font-size: 1.5rem; padding: 20px 40px; margin: 15px; border-radius: 12px; cursor: pointer; border: none; }
+        #network-panel { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 20; display: none; }
     </style>
-    
-    <!-- Three.js & GSAP -->
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
     </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
-    <!-- 🌟 追加：P2P通信ライブラリ PeerJS -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
-
-    <!-- 起動画面 -->
     <div id="start-screen">
-        <h2>どちらの画面として開きますか？</h2>
-        <button id="btn-main" class="mode-btn">💻 先生の画面（問題を表示）</button>
-        <button id="btn-sub" class="mode-btn">📱 生徒のそろばん（操作する）</button>
+        <button id="btn-main" class="mode-btn" style="background:#4299e1;color:white;">💻 先生（問題表示）</button>
+        <button id="btn-sub" class="mode-btn" style="background:#48bb78;color:white;">📱 生徒（そろばん操作）</button>
     </div>
-
-    <!-- ネットワーク情報表示 -->
-    <div id="network-panel">
-        <div id="status-text">通信準備中...</div>
-        <div id="sub-controls" style="display:none;">
-            <input type="text" id="target-id" placeholder="先生のIDを入力">
-            <button id="connect-btn">接続する</button>
-        </div>
-    </div>
-
-    <!-- 先生のUI -->
-    <div id="ui-panel">
-        <div id="teacher-message"></div>
-        <div id="problem-display"></div>
-        <button id="next-btn">つぎへ！</button>
-    </div>
-    <div id="celebration">大正解！！</div>
+    <div id="network-panel"><div id="status-text">通信準備中...</div><input id="target-id"><button id="connect-btn">接続</button></div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 
-        // ==========================================
-        // 状態・ネットワーク管理
-        // ==========================================
-        let role = null; // 'main' or 'sub'
-        let peer = null;
-        let connection = null;
+        let role = null, peer = null, connection = null;
+        const clickableObjects = [];
+        const activePointers = new Map(); // マルチタッチ用管理
 
-        const startScreen = document.getElementById('start-screen');
-        const netPanel = document.getElementById('network-panel');
-        const statusText = document.getElementById('status-text');
-        
-        // メイン画面（PC）を選んだとき
-        document.getElementById('btn-main').addEventListener('click', () => {
-            role = 'main';
-            startScreen.style.display = 'none';
-            document.getElementById('ui-panel').style.display = 'block';
-            netPanel.style.display = 'block';
-            
-            // PeerJS初期化（ID自動生成）
-            peer = new Peer();
-            peer.on('open', (id) => {
-                statusText.innerHTML = `【先生の画面】<br>スマホで開いて、このIDを入力してね:<br><strong style="font-size:1.2rem; color:#fbd38d">${id}</strong>`;
-            });
-            // スマホからの接続を待つ
-            peer.on('connection', (conn) => {
-                connection = conn;
-                statusText.innerHTML = "🟢 スマホと接続完了！";
-                // スマホから盤面データを受信した時の処理
-                conn.on('data', (data) => {
-                    if(data.type === 'syncBoard') applyBoardState(data.state);
-                });
-            });
-            updateCurriculumUI(); // 問題表示開始
-        });
-
-        // サブ画面（スマホ）を選んだとき
-        document.getElementById('btn-sub').addEventListener('click', () => {
-            role = 'sub';
-            startScreen.style.display = 'none';
-            netPanel.style.display = 'block';
-            document.getElementById('sub-controls').style.display = 'block';
-            statusText.innerHTML = "【生徒のそろばん】<br>先生の画面に表示されたIDを入力してね。";
-            
-            peer = new Peer();
-            document.getElementById('connect-btn').addEventListener('click', () => {
-                const targetId = document.getElementById('target-id').value;
-                if(!targetId) return;
-                connection = peer.connect(targetId);
-                connection.on('open', () => {
-                    statusText.innerHTML = "🟢 先生の画面と接続完了！<br>そろばんを上下にスワイプしてね";
-                    document.getElementById('sub-controls').style.display = 'none';
-                    // 接続時に一度現在の状態を送る
-                    sendBoardState();
-                });
-            });
-        });
-
-        // 盤面状態を先生の画面に送信する関数
-        function sendBoardState() {
-            if (role !== 'sub' || !connection || !connection.open) return;
-            const state = {};
-            clickableObjects.forEach((mesh, index) => {
-                if(mesh.morphTargetInfluences) {
-                    state[index] = [...mesh.morphTargetInfluences];
-                }
-            });
-            connection.send({ type: 'syncBoard', state: state });
-        }
-
-        // 先生の画面で受信した状態を適用する関数
-        function applyBoardState(state) {
-            clickableObjects.forEach((mesh, index) => {
-                if (state[index] && mesh.morphTargetInfluences) {
-                    // GSAPで滑らかに動かす
-                    gsap.to(mesh.morphTargetInfluences, {
-                        ...state[index], duration: 0.1
-                    });
-                }
-            });
-            // アニメーション後に判定
-            setTimeout(checkAnswer, 150); 
-        }
-
-        // ==========================================
-        // カリキュラム機能（メイン画面用）
-        // ==========================================
-        const curriculum =[
-            { msg: "先生：スマホのそろばんを弾いて「3」を作ってね！", prob: "3", val: 3 },
-            { msg: "先生：上の五珠は下へスワイプで下がるよ。「5」を作って！", prob: "5", val: 5 },
-            { msg: "先生：「5」と「3」を合わせて、「8」を作ってみよう！", prob: "8", val: 8 }
-        ];
-        let currentStep = 0;
-
-        function updateCurriculumUI() {
-            if(role !== 'main') return;
-            const step = curriculum[currentStep];
-            document.getElementById('teacher-message').innerText = step.msg;
-            document.getElementById('problem-display').innerText = step.prob;
-            document.getElementById('next-btn').style.display = 'none';
-        }
-
-        document.getElementById('next-btn').addEventListener('click', () => {
-            currentStep++;
-            if (currentStep < curriculum.length) updateCurriculumUI();
-            else {
-                document.getElementById('teacher-message').innerText = "全クリア！よくがんばりました！";
-                document.getElementById('problem-display').innerText = "";
-                document.getElementById('next-btn').style.display = 'none';
-            }
-        });
-
-        // ==========================================
-        // Three.js セットアップ (真上からの視点)
-        // ==========================================
+        // 初期化
         const scene = new THREE.Scene();
-        // ★変更点：カメラを真上に配置し、下(0,0,0)を見下ろす設定
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 15, 0); 
-        camera.lookAt(0, 0, 0);
+        // ★カメラ位置を画面サイズに応じて調整するロジック
+        function adjustCamera() {
+            const aspect = window.innerWidth / window.innerHeight;
+            camera.position.set(0, aspect > 1 ? 12 : 18, 0); // 横長なら近く、縦長なら遠く
+            camera.lookAt(0, 0, 0);
+        }
+        adjustCamera();
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        const effect = new OutlineEffect(renderer, { defaultThickness: 0.003, defaultColor:[0.1, 0.1, 0.1] });
-        
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        directionalLight.position.set(5, 10, 5); scene.add(directionalLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const light = new THREE.DirectionalLight(0xffffff, 1.2);
+        light.position.set(5, 10, 5);
+        scene.add(light);
 
-        // トゥーンマテリアル用の設定
-        const colors = new Uint8Array([0, 128, 255]);
-        const gradientMap = new THREE.DataTexture(colors, colors.length, 1, THREE.RedFormat);
-        gradientMap.needsUpdate = true; gradientMap.minFilter = THREE.NearestFilter; gradientMap.magFilter = THREE.NearestFilter;
-
-        const loader = new GLTFLoader();
-        const clickableObjects = [];
-        let columns =[];
-
-        loader.load('soroban.glb', function (gltf) {
-            const model = gltf.scene;
-            scene.add(model);
-
-            const tempColumns = {};
-            model.traverse((child) => {
-                if (child.isMesh && child.morphTargetDictionary) {
-                    clickableObjects.push(child);
-                    child.material = new THREE.MeshToonMaterial({
-                        color: child.material.color, map: child.material.map, gradientMap: gradientMap
-                    });
-                    
-                    // 桁の自動認識
-                    const box = new THREE.Box3().setFromObject(child);
-                    const colKey = Math.round(((box.min.x + box.max.x) / 2) * 10);
-                    if (!tempColumns[colKey]) tempColumns[colKey] = [];
-                    tempColumns[colKey].push(child);
-                }
-            });
-            const sortedKeys = Object.keys(tempColumns).map(Number).sort((a, b) => b - a);
-            sortedKeys.forEach(key => columns.push({ meshes: tempColumns[key] }));
-
-        }, undefined, function (error) { console.error(error); });
+        // モデル読み込み
+        new GLTFLoader().load('soroban.glb', (gltf) => {
+            gltf.scene.traverse(c => { if(c.isMesh) clickableObjects.push(c); });
+            scene.add(gltf.scene);
+        });
 
         // ==========================================
-        // ★スワイプ（ドラッグ）操作のロジック（サブ画面のみ有効）
+        // マルチタッチ操作ロジック
         // ==========================================
         const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
         
-        let isDragging = false;
-        let dragStartPosY = 0;
-        let draggedMesh = null;
-        let initialBeadState = 0;
-
         window.addEventListener('pointerdown', (e) => {
-            if (role !== 'sub') return; // 先生の画面では操作不可
-            
-            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            if (role !== 'sub') return;
+            const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
             raycaster.setFromCamera(mouse, camera);
-
             const intersects = raycaster.intersectObjects(clickableObjects, false);
+            
             if (intersects.length > 0) {
-                isDragging = true;
-                draggedMesh = intersects[0].object;
-                dragStartPosY = e.clientY; // 画面のY座標（上からのピクセル数）
-
-                // 現在の状態を保存
-                const dict = draggedMesh.morphTargetDictionary;
-                const influences = draggedMesh.morphTargetInfluences;
-                initialBeadState = 0;
-                
-                if ('5' in dict) {
-                    initialBeadState = influences[dict['5']] > 0.5 ? 1 : 0; // 1=下がっている, 0=上がっている
-                } else if ('1' in dict) {
-                    for (let i = 1; i <= 4; i++) {
-                        if (i.toString() in dict && influences[dict[i.toString()]] > 0.5) initialBeadState = i;
-                    }
-                }
+                activePointers.set(e.pointerId, {
+                    mesh: intersects[0].object,
+                    startY: e.clientY,
+                    initial: getMeshState(intersects[0].object)
+                });
             }
         });
 
         window.addEventListener('pointermove', (e) => {
-            if (!isDragging || !draggedMesh) return;
+            if (!activePointers.has(e.pointerId)) return;
+            const p = activePointers.get(e.pointerId);
+            const deltaY = e.clientY - p.startY;
+            const threshold = 30; // 感度
 
-            // 縦方向の移動量（下へスワイプするとプラス、上へスワイプするとマイナス）
-            const deltaY = e.clientY - dragStartPosY; 
-            const threshold = 25; // 何ピクセル動かしたら珠が動くか（感度調整）
-
-            const dict = draggedMesh.morphTargetDictionary;
-            const influences = draggedMesh.morphTargetInfluences;
-
-            // ① 五珠のスワイプ処理
+            const dict = p.mesh.morphTargetDictionary, infl = p.mesh.morphTargetInfluences;
             if ('5' in dict) {
-                const index5 = dict['5'];
-                if (deltaY > threshold) {
-                    // 下へスワイプ：珠を下げる（値を1にする）
-                    if (influences[index5] !== 1) {
-                        influences[index5] = 1;
-                        sendBoardState();
-                    }
-                } else if (deltaY < -threshold) {
-                    // 上へスワイプ：珠を上げる（値を0にする）
-                    if (influences[index5] !== 0) {
-                        influences[index5] = 0;
-                        sendBoardState();
-                    }
-                }
-            } 
-            // ② 一珠のスワイプ処理
-            else if ('1' in dict) {
-                // 上へスワイプ(-deltaY)で珠が増える、下(+deltaY)で減る
-                let step = Math.floor(-deltaY / threshold);
-                
-                if (step !== 0) {
-                    let newState = initialBeadState + step;
-                    newState = Math.max(0, Math.min(4, newState)); // 0〜4の間に制限
-
-                    // 状態を適用
-                    for (let i = 1; i <= 4; i++) {
-                        if (i.toString() in dict) {
-                            influences[dict[i.toString()]] = (i === newState) ? 1 : 0;
-                        }
-                    }
-                    
-                    sendBoardState(); // 先生の画面へ送信
-                    
-                    // 連続で弾けるように基準点を更新
-                    dragStartPosY = e.clientY;
-                    initialBeadState = newState;
-                }
+                infl[dict['5']] = deltaY > threshold ? 1 : 0;
+            } else if ('1' in dict) {
+                let newState = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
+                for (let i = 1; i <= 4; i++) if (i.toString() in dict) infl[dict[i.toString()]] = (i === newState) ? 1 : 0;
             }
+            if (connection) connection.send({ type: 'sync', state: getBoardState() });
         });
 
-        window.addEventListener('pointerup', () => {
-            isDragging = false;
-            draggedMesh = null;
-        });
+        window.addEventListener('pointerup', (e) => activePointers.delete(e.pointerId));
 
-        // ==========================================
-        // 数値の計算と正解判定（先生の画面用）
-        // ==========================================
-        function getSorobanValue() {
-            let total = 0, multiplier = 1;
-            for (let i = 0; i < columns.length; i++) {
-                let colValue = 0;
-                columns[i].meshes.forEach(mesh => {
-                    const dict = mesh.morphTargetDictionary;
-                    const infl = mesh.morphTargetInfluences;
-                    if ('5' in dict && infl[dict['5']] > 0.5) colValue += 5;
-                    else if ('1' in dict) {
-                        for(let j = 1; j <= 4; j++) { if (j.toString() in dict && infl[dict[j.toString()]] > 0.5) colValue = j; }
-                    }
+        // 補助関数
+        function getMeshState(m) {
+            const d = m.morphTargetDictionary, i = m.morphTargetInfluences;
+            if ('5' in d) return i[d['5']] > 0.5 ? 1 : 0;
+            for (let j = 1; j <= 4; j++) if (j.toString() in d && i[d[j.toString()]] > 0.5) return j;
+            return 0;
+        }
+
+        function getBoardState() {
+            const s = {};
+            clickableObjects.forEach((m, idx) => s[idx] = [...m.morphTargetInfluences]);
+            return s;
+        }
+
+        // 通信初期化（簡略化版）
+        document.getElementById('btn-main').onclick = () => {
+            role = 'main'; document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('network-panel').style.display = 'block';
+            peer = new Peer();
+            peer.on('open', id => document.getElementById('status-text').innerText = "先生ID: " + id);
+            peer.on('connection', conn => {
+                connection = conn;
+                conn.on('data', d => {
+                    clickableObjects.forEach((m, idx) => m.morphTargetInfluences.set(d.state[idx]));
                 });
-                total += colValue * multiplier;
-                multiplier *= 10;
-            }
-            return total;
-        }
+            });
+        };
 
-        function checkAnswer() {
-            if (role !== 'main' || currentStep >= curriculum.length) return;
-            const currentValue = getSorobanValue();
-            if (currentValue === curriculum[currentStep].val) {
-                const celeb = document.getElementById('celebration');
-                gsap.to(celeb, { opacity: 1, scale: 1.2, duration: 0.3, yoyo: true, repeat: 1 });
-                document.getElementById('next-btn').style.display = 'inline-block';
-            }
-        }
-
-        // ==========================================
-        // レンダリングループ
-        // ==========================================
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        document.getElementById('btn-sub').onclick = () => {
+            role = 'sub'; document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('network-panel').style.display = 'block';
+            document.getElementById('connect-btn').onclick = () => {
+                connection = new Peer().connect(document.getElementById('target-id').value);
+            };
+        };
 
         function animate() {
             requestAnimationFrame(animate);
-            effect.render(scene, camera);
+            renderer.render(scene, camera);
         }
         animate();
     </script>
