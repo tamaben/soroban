@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>State-Based Soroban</title>
+    <title>Soroban Independent Beads</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -18,7 +18,6 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // 1. レンダリング・環境設定
         const scene = new THREE.Scene();
         const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
         camera.position.set(0, 10, 0); camera.lookAt(0, 0, 0);
@@ -27,98 +26,69 @@
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
-
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // 2. モデル読み込み
+        // 1. 列ごとに珠を管理する配列
+        let columns = []; 
         let clickableObjects = [];
-        let columns = [];
         const loader = new GLTFLoader();
 
         loader.load('soroban.glb', (gltf) => {
-            const model = gltf.scene;
-            scene.add(model);
-
+            scene.add(gltf.scene);
             const colMap = {};
-            model.traverse(c => {
-                if (c.isMesh) {
+            
+            gltf.scene.traverse(c => {
+                if(c.isMesh && c.morphTargetDictionary) {
                     clickableObjects.push(c);
-                    
-                    // マテリアル引き継ぎ
-                    const color = c.material.color ? c.material.color.clone() : new THREE.Color(0xffffff);
-                    c.material = new THREE.MeshToonMaterial({ color: color, map: c.material.map });
-
-                    // 列管理 (X座標)
+                    // 列を特定 (X座標で判定)
                     const colKey = Math.round(c.position.x * 10);
                     if(!colMap[colKey]) colMap[colKey] = [];
                     colMap[colKey].push(c);
-                    
-                    // シェイプキー名(1,2,3,4)から番号を取得
-                    if(c.morphTargetDictionary) {
-                        for(let i=1; i<=4; i++) {
-                            if(c.morphTargetDictionary[i.toString()] !== undefined) c.userData.beadIndex = i;
-                        }
-                    }
+
+                    // 珠の属性をuserDataに保持
+                    // 名前から番号を抽出 (例: "bead_5" -> 5, "bead_3" -> 3)
+                    const match = c.name.match(/bead_(\d+)/);
+                    if(match) c.userData.targetState = parseInt(match[1]);
                 }
             });
             columns = Object.values(colMap);
-            
-            // サイズ調整
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const scale = 15 / Math.max(size.x, size.z);
-            model.scale.set(scale, scale, scale);
-            updateCamera(Math.max(size.x, size.z) * scale);
         });
 
-        function updateCamera(frustum) {
-            const aspect = window.innerWidth / window.innerHeight;
-            const w = frustum * aspect / 2; const h = frustum / 2;
-            camera.left = -w; camera.right = w; camera.top = h; camera.bottom = -h;
-            camera.updateProjectionMatrix();
-        }
-
-        // 3. 【重要】状態選択型ロジック
-        function syncBeads(mesh, targetState) {
-            const col = columns.find(list => list.includes(mesh));
-            if (!col) return;
+        // 2. 状態同期ロジック
+        function updateColumnState(clickedMesh, targetState) {
+            const col = columns.find(list => list.includes(clickedMesh));
+            if(!col) return;
 
             col.forEach(bead => {
                 const dict = bead.morphTargetDictionary;
+                const infl = bead.morphTargetInfluences;
                 if(!dict) return;
 
-                for (let i = 1; i <= 4; i++) {
-                    const keyName = i.toString();
-                    if(dict[keyName] !== undefined) {
-                        const idx = dict[keyName];
-                        // targetState のキーだけを 1 にし、他を 0 にする
-                        const val = (i === targetState) ? 1 : 0;
-                        gsap.to(bead.morphTargetInfluences, { [idx]: val, duration: 0.2, ease: "power2.out" });
+                // 各珠のターゲット番号と一致するキーだけを最大(1)にし、他を(0)にする
+                const myState = bead.userData.targetState;
+                if(myState !== undefined) {
+                    const targetVal = (myState === targetState) ? 1 : 0;
+                    const idx = dict[myState.toString()];
+                    if(idx !== undefined) {
+                        gsap.to(infl, { [idx]: targetVal, duration: 0.2, ease: "power2.out" });
                     }
                 }
             });
         }
 
-        // 4. 操作 (マルチタッチ・スワイプ)
+        // 3. 操作
         const raycaster = new THREE.Raycaster();
-        const activePointers = new Map();
-
         window.addEventListener('pointerdown', (e) => {
             const mouse = new THREE.Vector2((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
             raycaster.setFromCamera(mouse, camera);
             const inter = raycaster.intersectObjects(clickableObjects, false);
-            if(inter.length > 0) activePointers.set(e.pointerId, { mesh: inter[0].object, startY: e.clientY });
+            if(inter.length > 0) {
+                const m = inter[0].object;
+                if(m.userData.targetState !== undefined) {
+                    updateColumnState(m, m.userData.targetState);
+                }
+            }
         });
-
-        window.addEventListener('pointermove', (e) => {
-            if(!activePointers.has(e.pointerId)) return;
-            const p = activePointers.get(e.pointerId);
-            const target = Math.max(0, Math.min(4, Math.floor(-(e.clientY - p.startY)/30)));
-            syncBeads(p.mesh, target);
-        });
-
-        window.addEventListener('pointerup', e => activePointers.delete(e.pointerId));
-        window.addEventListener('resize', () => { renderer.setSize(window.innerWidth, window.innerHeight); });
 
         function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
         animate();
