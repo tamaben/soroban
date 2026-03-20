@@ -3,19 +3,93 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2Dイラスト風 3Dそろばん</title>
+    <title>3Dそろばん学習教室</title>
     <style>
-        /* 背景色を少し明るめの色にするとイラスト感が引き立ちます */
-        body { margin: 0; overflow: hidden; background-color: #e0f2fe; }
+        /* ==========================================
+           1. フォントの読み込み
+           ========================================== */
+        @font-face {
+            font-family: 'ABACUS2';
+            /* スペースや特殊文字エラーを防ぐため、ファイル名に合わせて適宜変更してください */
+            src: url('ABACUS².ttf') format('truetype');
+        }
+
+        /* ==========================================
+           2. UIデザイン (学習サイト風レイアウト)
+           ========================================== */
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #fdf6e3; /* 優しいノートのような背景色 */
+            font-family: 'Hiragino Maru Gothic ProN', 'Rounded M+ 1c', 'Meiryo', sans-serif;
+        }
         canvas { display: block; }
-        #info {
+
+        /* 上部の学習パネル */
+        #ui-panel {
             position: absolute;
             top: 20px;
-            width: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 600px;
+            background-color: white;
+            border: 4px solid #4a5568;
+            border-radius: 16px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            padding: 20px;
             text-align: center;
-            color: #333;
-            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            z-index: 10;
+        }
+
+        /* 先生のセリフ部分 */
+        #teacher-message {
+            font-size: 1.2rem;
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-weight: bold;
+            line-height: 1.5;
+        }
+
+        /* 問題表示部分 (ABACUS² フォントを使用) */
+        #problem-display {
+            font-family: 'ABACUS2', sans-serif;
+            font-size: 4rem; /* フォントサイズは適宜調整してください */
+            color: #e53e3e;  /* 赤色で目立たせる */
+            margin: 10px 0;
+            letter-spacing: 5px;
+        }
+
+        /* 次へボタン */
+        #next-btn {
+            display: none; /* 最初は隠しておく */
+            background-color: #48bb78;
+            color: white;
+            border: none;
+            padding: 12px 32px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.1s, background-color 0.2s;
+        }
+        #next-btn:hover { background-color: #38a169; transform: scale(1.05); }
+        #next-btn:active { transform: scale(0.95); }
+
+        /* 正解エフェクト用 */
+        #celebration {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 5rem;
+            color: #ed8936;
+            font-weight: bold;
+            text-shadow: 2px 2px 0 #fff, -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff;
+            opacity: 0;
             pointer-events: none;
+            z-index: 20;
         }
     </style>
     <script type="importmap">
@@ -29,19 +103,74 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
-    <div id="info">
-        <h3>2Dイラスト風 そろばん</h3>
-        <p>珠をクリックすると動きます</p>
+    <!-- UI要素 -->
+    <div id="ui-panel">
+        <div id="teacher-message">先生：読み込み中...</div>
+        <div id="problem-display"></div>
+        <button id="next-btn">つぎへ！</button>
     </div>
+    <div id="celebration">大正解！！</div>
 
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        // 🌟 追加：輪郭線を描画するためのモジュール
         import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 
-        // 1. 基本設定
+        // ==========================================
+        // 1. カリキュラム（脚本）データ
+        // ==========================================
+        const curriculum =[
+            {
+                message: "こんにちは！まずは基本からだね。そろばんで「3」を作ってみよう！",
+                problemText: "3", // ABACUS2フォントで表示されるテキスト
+                targetValue: 3
+            },
+            {
+                message: "すごい！次は上の「五珠（ごだま）」を使うよ。1の位を「5」にしてね！",
+                problemText: "5",
+                targetValue: 5
+            },
+            {
+                message: "バッチリ！「5」と「3」を合わせるといくつになるかな？作ってみて！",
+                problemText: "8",
+                targetValue: 8
+            },
+            {
+                message: "天才！じゃあ、10の位も使ってみよう。「12」を作れるかな？",
+                problemText: "12",
+                targetValue: 12
+            }
+        ];
+        let currentStep = 0;
+
+        // UI要素の取得
+        const messageEl = document.getElementById('teacher-message');
+        const problemEl = document.getElementById('problem-display');
+        const nextBtn = document.getElementById('next-btn');
+        const celebEl = document.getElementById('celebration');
+
+        function updateUI() {
+            const step = curriculum[currentStep];
+            messageEl.innerHTML = `先生：${step.message}`;
+            problemEl.innerText = step.problemText;
+            nextBtn.style.display = 'none';
+        }
+
+        nextBtn.addEventListener('click', () => {
+            currentStep++;
+            if (currentStep >= curriculum.length) {
+                messageEl.innerHTML = "先生：今日のレッスンはクリア！お疲れ様！";
+                problemEl.innerText = "";
+                nextBtn.style.display = 'none';
+            } else {
+                updateUI();
+            }
+        });
+
+        // ==========================================
+        // 2. Three.js セットアップ (2Dイラスト風)
+        // ==========================================
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         camera.position.set(0, 15, 20);
@@ -53,56 +182,127 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
-        // 🌟 追加：輪郭線（アウトライン）エフェクトの設定
-        const effect = new OutlineEffect(renderer, {
-            defaultThickness: 0.003, // 線の太さ（モデルに合わせて調整してください）
-            defaultColor: [0.1, 0.1, 0.1], // 線の色（真っ黒より少しグレーにすると馴染みます）
-            defaultAlpha: 1.0
-        });
+        const effect = new OutlineEffect(renderer, { defaultThickness: 0.003, defaultColor:[0.1, 0.1, 0.1] });
 
-        // 2. ライトの設定（トゥーンシェーディング向けに調整）
-        // 影をクッキリさせるため、環境光を弱め、平行光源を強めにします
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
         scene.add(ambientLight);
-        
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        directionalLight.position.set(5, 10, 5); // 光の当たる角度
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight.position.set(5, 10, 5);
         scene.add(directionalLight);
 
-        // 🌟 追加：トゥーンシェーディング用のグラデーションデータを作成（3段階の影）
         const colors = new Uint8Array([0, 128, 255]);
         const gradientMap = new THREE.DataTexture(colors, colors.length, 1, THREE.RedFormat);
         gradientMap.needsUpdate = true;
-        // 影の境界をボカさず「クッキリ」させる設定
         gradientMap.minFilter = THREE.NearestFilter;
         gradientMap.magFilter = THREE.NearestFilter;
 
-        // 3. そろばんモデルの読み込みとマテリアルの書き換え
+        // ==========================================
+        // 3. モデル読み込みと【桁の自動認識】ロジック
+        // ==========================================
         const loader = new GLTFLoader();
-        const clickableObjects =[];
+        const clickableObjects = [];
+        let columns =[]; // 各桁のオブジェクトを保存する配列
 
         loader.load('soroban.glb', function (gltf) {
             const model = gltf.scene;
             scene.add(model);
 
+            // メッシュの収集とマテリアル変更
             model.traverse((child) => {
-                if (child.isMesh) {
+                if (child.isMesh && child.morphTargetDictionary) {
                     clickableObjects.push(child);
-
-                    // 🌟 追加：Blenderの標準マテリアルを、トゥーンマテリアルに置き換える
                     const oldMat = child.material;
                     child.material = new THREE.MeshToonMaterial({
-                        color: oldMat.color,       // Blenderで設定した色を引き継ぐ
-                        map: oldMat.map,           // テクスチャ画像があれば引き継ぐ
-                        gradientMap: gradientMap   // 作成したトゥーン用の影を設定
+                        color: oldMat.color, map: oldMat.map, gradientMap: gradientMap
                     });
                 }
             });
+
+            // ★桁（列）をX座標でグループ分けするロジック
+            // 右から左へ（1の位、10の位...）並べるための準備
+            const tempColumns = {};
+            clickableObjects.forEach(mesh => {
+                // オブジェクトのワールド座標を取得
+                const box = new THREE.Box3().setFromObject(mesh);
+                const centerX = (box.min.x + box.max.x) / 2;
+                
+                // X座標を小数点第一位くらいで丸めて同じ列とみなす（モデルのサイズにより調整が必要）
+                const colKey = Math.round(centerX * 10); 
+                
+                if (!tempColumns[colKey]) tempColumns[colKey] = [];
+                tempColumns[colKey].push(mesh);
+            });
+
+            // X座標が大きい順（右側から順）にソートして配列化
+            const sortedKeys = Object.keys(tempColumns).map(Number).sort((a, b) => b - a);
+            sortedKeys.forEach(key => {
+                columns.push({ meshes: tempColumns[key] });
+            });
+
+            console.log("認識された桁数:", columns.length);
+            
+            // 最初の問題を表示
+            updateUI();
+
         }, undefined, function (error) {
-            console.error('モデルの読み込みエラー', error);
+            console.error('モデル読み込みエラー', error);
+            messageEl.innerHTML = "エラー：モデルが読み込めませんでした。";
         });
 
-        // 4. クリック操作（前回のコードと同じです）
+        // ==========================================
+        // 4. 【現在の盤面の数値を計算する】関数
+        // ==========================================
+        function getSorobanValue() {
+            let totalValue = 0;
+            let multiplier = 1; // 1の位から計算スタート
+
+            // 右の列（1の位）から順番に計算していく
+            for (let i = 0; i < columns.length; i++) {
+                let colValue = 0;
+                
+                columns[i].meshes.forEach(mesh => {
+                    const dict = mesh.morphTargetDictionary;
+                    const influences = mesh.morphTargetInfluences;
+
+                    // 五珠の計算
+                    if ('5' in dict) {
+                        if (influences[dict['5']] > 0.5) colValue += 5;
+                    } 
+                    // 一珠の計算
+                    else if ('1' in dict) {
+                        let onesCount = 0;
+                        for(let j = 1; j <= 4; j++) {
+                            if (j.toString() in dict && influences[dict[j.toString()]] > 0.5) {
+                                onesCount = j;
+                            }
+                        }
+                        colValue += onesCount;
+                    }
+                });
+
+                totalValue += colValue * multiplier;
+                multiplier *= 10; // 次の桁は10倍
+            }
+            return totalValue;
+        }
+
+        // 正解判定ロジック
+        function checkAnswer() {
+            if (currentStep >= curriculum.length) return;
+
+            const currentValue = getSorobanValue();
+            console.log("現在のそろばんの数値:", currentValue);
+
+            if (currentValue === curriculum[currentStep].targetValue) {
+                // 正解の時の処理
+                gsap.to(celebEl, { opacity: 1, scale: 1.2, duration: 0.3, yoyo: true, repeat: 1 });
+                nextBtn.style.display = 'inline-block';
+            }
+        }
+
+        // ==========================================
+        // 5. クリック操作とアニメーション
+        // ==========================================
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
@@ -120,12 +320,14 @@
 
                 if (!dictionary) return;
 
+                // アニメーション完了後に判定を行うためのコールバック
+                const onComplete = () => { checkAnswer(); };
+
                 // 五珠の処理
                 if ('5' in dictionary) {
                     const index5 = dictionary['5'];
-                    const currentVal = influences[index5];
-                    const targetVal = currentVal > 0.5 ? 0 : 1;
-                    gsap.to(influences, { [index5]: targetVal, duration: 0.15, ease: "power2.out" });
+                    const targetVal = influences[index5] > 0.5 ? 0 : 1;
+                    gsap.to(influences, { [index5]: targetVal, duration: 0.15, ease: "power2.out", onComplete });
                 }
                 // 一珠の処理
                 else if ('1' in dictionary) {
@@ -133,13 +335,11 @@
                     const maxBeads = 4;
                     for (let i = 1; i <= maxBeads; i++) {
                         const keyName = i.toString();
-                        if (keyName in dictionary && influences[dictionary[keyName]] > 0.5) {
-                            currentState = i;
-                        }
+                        if (keyName in dictionary && influences[dictionary[keyName]] > 0.5) currentState = i;
                     }
 
                     let nextState = currentState + 1;
-                    if (nextState > maxBeads) { nextState = 0; }
+                    if (nextState > maxBeads) nextState = 0;
 
                     const animationTargets = {};
                     for (let i = 1; i <= maxBeads; i++) {
@@ -149,24 +349,20 @@
                         }
                     }
 
-                    gsap.to(influences, { ...animationTargets, duration: 0.15, ease: "power2.out" });
+                    gsap.to(influences, { ...animationTargets, duration: 0.15, ease: "power2.out", onComplete });
                 }
             }
         });
 
-        // 5. ウィンドウサイズ変更
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // 6. アニメーションループ
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
-            
-            // 🌟 変更：renderer.render(...) ではなく、effect.render(...) を使う
             effect.render(scene, camera);
         }
         animate();
