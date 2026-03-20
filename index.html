@@ -3,13 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Soroban Mirror</title>
+    <title>Ultimate Soroban Control</title>
     <style>
-        @font-face { font-family: 'ABACUS2'; src: url('ABACUS2.ttf') format('truetype'); }
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; background: rgba(255,255,255,0.9); }
-        .ui-btn { font-size: 1.5rem; padding: 20px 40px; margin: 10px; border-radius: 12px; border: none; cursor: pointer; color: white; }
+        #ui-layer { position: absolute; top: 10px; left: 10px; z-index: 10; pointer-events: none; }
     </style>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
@@ -18,88 +16,95 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
-    <div id="overlay">
-        <button id="btn-main" class="ui-btn" style="background:#4299e1;">💻 先生画面</button>
-        <button id="btn-sub" class="ui-btn" style="background:#48bb78;">📱 生徒操作</button>
-        <div id="status"></div>
-    </div>
-
+    <div id="ui-layer"></div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // 設定
-        let role = null, peer = null, connection = null;
-        const clickableObjects = [];
-        const columns = [];
-        const activePointers = new Map();
-
-        // Scene
+        // 1. レンダリング環境設定
         const scene = new THREE.Scene();
-        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
-        camera.position.set(0, 10, 0); camera.lookAt(0, 0, 0);
-
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
-
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // Load
-        new GLTFLoader().load('soroban.glb', (gltf) => {
-            scene.add(gltf.scene);
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+        camera.position.set(0, 10, 0); camera.lookAt(0, 0, 0);
+
+        // 2. モデル読み込みとマテリアル＆サイズ自動調整
+        let clickableObjects = [];
+        let columns = [];
+        const loader = new GLTFLoader();
+
+        loader.load('soroban.glb', (gltf) => {
+            const model = gltf.scene;
+            scene.add(model);
+
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const scale = 15 / Math.max(size.x, size.z);
+            model.scale.set(scale, scale, scale);
+
             const colMap = {};
-            gltf.scene.traverse(c => {
-                if(c.isMesh) {
+            model.traverse(c => {
+                if (c.isMesh) {
                     clickableObjects.push(c);
-                    const colKey = Math.round(c.position.x * 5);
+                    // マテリアル引き継ぎ
+                    const color = c.material.color ? c.material.color.clone() : new THREE.Color(0xffffff);
+                    c.material = new THREE.MeshToonMaterial({ color: color, map: c.material.map });
+                    
+                    // 列管理 (X座標)
+                    const colKey = Math.round(c.position.x * scale * 10);
                     if(!colMap[colKey]) colMap[colKey] = [];
                     colMap[colKey].push(c);
-                    const match = c.name.match(/bead_(\d+)/);
-                    if(match) c.userData.beadIndex = parseInt(match[1]);
+                    
+                    // 珠の番号 (シェイプキー名 '1'-'4' を探索)
+                    if(c.morphTargetDictionary) {
+                        for(let i=1; i<=4; i++) {
+                            if(c.morphTargetDictionary[i.toString()] !== undefined) c.userData.beadIndex = i;
+                        }
+                    }
                 }
             });
-            Object.values(colMap).forEach(list => columns.push(list));
-            updateCamera();
+            columns = Object.values(colMap);
+            updateCamera(Math.max(size.x, size.z) * scale);
         });
 
-        function updateCamera() {
+        function updateCamera(frustum) {
             const aspect = window.innerWidth / window.innerHeight;
-            const frustum = 15;
-            camera.left = -frustum * aspect / 2; camera.right = frustum * aspect / 2;
-            camera.top = frustum / 2; camera.bottom = -frustum / 2;
+            const w = frustum * aspect / 2; const h = frustum / 2;
+            camera.left = -w; camera.right = w; camera.top = h; camera.bottom = -h;
             camera.updateProjectionMatrix();
         }
 
-        // Logic
-        function syncBeads(mesh, targetIndex) {
+        // 3. 連動ロジック
+        function syncBeads(mesh, targetCount) {
             const col = columns.find(list => list.includes(mesh));
-            if(!col) return;
+            if (!col) return;
             col.forEach(bead => {
-                const targetValue = (bead.userData.beadIndex <= targetIndex) ? 1 : 0;
-                Object.values(bead.morphTargetDictionary).forEach(idx => {
-                    gsap.to(bead.morphTargetInfluences, { [idx]: targetValue, duration: 0.2 });
-                });
+                const dict = bead.morphTargetDictionary;
+                if(!dict) return;
+                for (let i = 1; i <= 4; i++) {
+                    const idx = dict[i.toString()];
+                    if(idx !== undefined) {
+                        gsap.to(bead.morphTargetInfluences, { [idx]: (i <= targetCount) ? 1 : 0, duration: 0.2 });
+                    }
+                }
             });
-            if(connection && role === 'sub') connection.send({ type: 'sync', state: getBoardState() });
         }
 
-        function getBoardState() {
-            const s = {};
-            clickableObjects.forEach((m, i) => s[i] = [...m.morphTargetInfluences]);
-            return s;
-        }
-
-        // Pointer
+        // 4. マルチタッチ操作
         const raycaster = new THREE.Raycaster();
-        window.addEventListener('pointerdown', e => {
+        const activePointers = new Map();
+
+        window.addEventListener('pointerdown', (e) => {
             const mouse = new THREE.Vector2((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
             raycaster.setFromCamera(mouse, camera);
             const inter = raycaster.intersectObjects(clickableObjects, false);
             if(inter.length > 0) {
                 const m = inter[0].object;
-                activePointers.set(e.pointerId, { mesh: m, startY: e.clientY, initial: getMeshState(m) });
+                activePointers.set(e.pointerId, { mesh: m, startY: e.clientY, initial: getInitialState(m) });
             }
         });
 
@@ -110,36 +115,17 @@
             syncBeads(p.mesh, target);
         });
 
-        function getMeshState(m) {
-            const i = m.morphTargetInfluences;
-            if('5' in m.morphTargetDictionary) return i[m.morphTargetDictionary['5']] > 0.5 ? 1 : 0;
-            for(let j=1; j<=4; j++) if(m.userData.beadIndex === j && i[m.morphTargetDictionary[j.toString()]] > 0.5) return j;
+        window.addEventListener('pointerup', e => activePointers.delete(e.pointerId));
+
+        function getInitialState(m) {
+            const d = m.morphTargetDictionary, i = m.morphTargetInfluences;
+            for(let j=1; j<=4; j++) if(i[d[j.toString()]] > 0.5) return j;
             return 0;
         }
 
-        // Network
-        document.getElementById('btn-main').onclick = () => {
-            role = 'main'; document.getElementById('overlay').style.display = 'none';
-            peer = new Peer();
-            peer.on('open', id => document.getElementById('status').innerText = "ID: " + id);
-            peer.on('connection', conn => {
-                connection = conn;
-                conn.on('data', d => {
-                    Object.keys(d.state).forEach((idx, i) => gsap.to(clickableObjects[idx].morphTargetInfluences, { ...d.state[idx], duration: 0.1 }));
-                });
-            });
-        };
-
-        document.getElementById('btn-sub').onclick = () => {
-            role = 'sub'; document.getElementById('status').innerHTML = '<input id="i"><button onclick="connect()">Connect</button>';
-        };
-        window.connect = () => {
-            connection = new Peer().connect(document.getElementById('i').value);
-            document.getElementById('overlay').style.display = 'none';
-        };
-
         function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
         animate();
+        window.addEventListener('resize', () => { renderer.setSize(window.innerWidth, window.innerHeight); });
     </script>
 </body>
 </html>
