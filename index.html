@@ -1,65 +1,175 @@
-// 4. クリック操作（Raycaster）の準備
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2Dイラスト風 3Dそろばん</title>
+    <style>
+        /* 背景色を少し明るめの色にするとイラスト感が引き立ちます */
+        body { margin: 0; overflow: hidden; background-color: #e0f2fe; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #333;
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            pointer-events: none;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
+</head>
+<body>
+    <div id="info">
+        <h3>2Dイラスト風 そろばん</h3>
+        <p>珠をクリックすると動きます</p>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        // 🌟 追加：輪郭線を描画するためのモジュール
+        import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+
+        // 1. 基本設定
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 15, 20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // 🌟 追加：輪郭線（アウトライン）エフェクトの設定
+        const effect = new OutlineEffect(renderer, {
+            defaultThickness: 0.003, // 線の太さ（モデルに合わせて調整してください）
+            defaultColor: [0.1, 0.1, 0.1], // 線の色（真っ黒より少しグレーにすると馴染みます）
+            defaultAlpha: 1.0
+        });
+
+        // 2. ライトの設定（トゥーンシェーディング向けに調整）
+        // 影をクッキリさせるため、環境光を弱め、平行光源を強めにします
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); 
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        directionalLight.position.set(5, 10, 5); // 光の当たる角度
+        scene.add(directionalLight);
+
+        // 🌟 追加：トゥーンシェーディング用のグラデーションデータを作成（3段階の影）
+        const colors = new Uint8Array([0, 128, 255]);
+        const gradientMap = new THREE.DataTexture(colors, colors.length, 1, THREE.RedFormat);
+        gradientMap.needsUpdate = true;
+        // 影の境界をボカさず「クッキリ」させる設定
+        gradientMap.minFilter = THREE.NearestFilter;
+        gradientMap.magFilter = THREE.NearestFilter;
+
+        // 3. そろばんモデルの読み込みとマテリアルの書き換え
+        const loader = new GLTFLoader();
+        const clickableObjects =[];
+
+        loader.load('soroban.glb', function (gltf) {
+            const model = gltf.scene;
+            scene.add(model);
+
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    clickableObjects.push(child);
+
+                    // 🌟 追加：Blenderの標準マテリアルを、トゥーンマテリアルに置き換える
+                    const oldMat = child.material;
+                    child.material = new THREE.MeshToonMaterial({
+                        color: oldMat.color,       // Blenderで設定した色を引き継ぐ
+                        map: oldMat.map,           // テクスチャ画像があれば引き継ぐ
+                        gradientMap: gradientMap   // 作成したトゥーン用の影を設定
+                    });
+                }
+            });
+        }, undefined, function (error) {
+            console.error('モデルの読み込みエラー', error);
+        });
+
+        // 4. クリック操作（前回のコードと同じです）
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
         window.addEventListener('click', (event) => {
-            // マウス座標を変換
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
             raycaster.setFromCamera(mouse, camera);
 
-            // 光線と交差したメッシュ（珠）を取得
             const intersects = raycaster.intersectObjects(clickableObjects, false);
 
             if (intersects.length > 0) {
                 const clickedMesh = intersects[0].object;
+                const dictionary = clickedMesh.morphTargetDictionary;
+                const influences = clickedMesh.morphTargetInfluences;
 
-                // クリックされたメッシュがシェイプキーを持っているか確認
-                if (clickedMesh.morphTargetDictionary) {
-                    
-                    // このメッシュが持っているシェイプキーの名前のリストを取得
-                    // 例: ['1', '2', '3'] や ['5'] など
-                    const shapeKeyNames = Object.keys(clickedMesh.morphTargetDictionary);
-                    
-                    if (shapeKeyNames.length > 0) {
-                        // どのシェイプキーを動かすか判定する
-                        let targetKeyName = null;
+                if (!dictionary) return;
 
-                        // もし名前に "5" があれば、5の珠とみなす
-                        if (shapeKeyNames.includes('5')) {
-                            targetKeyName = '5';
-                        } 
-                        // もし名前に "1" があれば、1の珠とみなす
-                        else if (shapeKeyNames.includes('1')) {
-                            targetKeyName = '1';
+                // 五珠の処理
+                if ('5' in dictionary) {
+                    const index5 = dictionary['5'];
+                    const currentVal = influences[index5];
+                    const targetVal = currentVal > 0.5 ? 0 : 1;
+                    gsap.to(influences, { [index5]: targetVal, duration: 0.15, ease: "power2.out" });
+                }
+                // 一珠の処理
+                else if ('1' in dictionary) {
+                    let currentState = 0;
+                    const maxBeads = 4;
+                    for (let i = 1; i <= maxBeads; i++) {
+                        const keyName = i.toString();
+                        if (keyName in dictionary && influences[dictionary[keyName]] > 0.5) {
+                            currentState = i;
                         }
-                        // どちらもなければ、とりあえずリストの最初のシェイプキーを選ぶ
-                        else {
-                            targetKeyName = shapeKeyNames[0];
-                        }
-
-                        // 動かすシェイプキーのインデックス（配列の何番目か）を取得
-                        const targetIndex = clickedMesh.morphTargetDictionary[targetKeyName];
-                        
-                        // 現在の値を取得
-                        const currentValue = clickedMesh.morphTargetInfluences[targetIndex];
-                        
-                        // 現在の値が0.5以上なら 0 に戻す、そうでなければ 1 にする
-                        // （※glTF仕様に基づき、最大値は 1.0 として扱います）
-                        const targetValue = currentValue > 0.5 ? 0 : 1;
-
-                        // GSAPを使って滑らかにアニメーションさせる
-                        gsap.to(clickedMesh.morphTargetInfluences, {
-                            [targetIndex]: targetValue,
-                            duration: 0.15,
-                            ease: "power2.out"
-                        });
-
-                        console.log(`動かした珠: ${clickedMesh.name}, シェイプキー: ${targetKeyName}, 値を ${targetValue} に変更`);
                     }
-                } else {
-                    console.log("クリックされたオブジェクトにはシェイプキーがありません。");
+
+                    let nextState = currentState + 1;
+                    if (nextState > maxBeads) { nextState = 0; }
+
+                    const animationTargets = {};
+                    for (let i = 1; i <= maxBeads; i++) {
+                        const keyName = i.toString();
+                        if (keyName in dictionary) {
+                            animationTargets[dictionary[keyName]] = (i === nextState) ? 1 : 0;
+                        }
+                    }
+
+                    gsap.to(influences, { ...animationTargets, duration: 0.15, ease: "power2.out" });
                 }
             }
         });
+
+        // 5. ウィンドウサイズ変更
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 6. アニメーションループ
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            
+            // 🌟 変更：renderer.render(...) ではなく、effect.render(...) を使う
+            effect.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
