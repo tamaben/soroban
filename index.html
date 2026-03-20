@@ -2,11 +2,11 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Soroban - Toon Material</title>
+    <title>Soroban Robust Control</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #fdf6e3; touch-action: none; }
+        body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
+        #debug { position: absolute; top: 10px; left: 10px; color: red; pointer-events: none; }
     </style>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
@@ -14,111 +14,79 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
+    <div id="debug"></div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // 1. レンダラー設定 (高精細表示)
         const scene = new THREE.Scene();
-        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+        const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, -100, 100);
+        camera.position.set(0, 10, 0);
+        camera.lookAt(0, 0, 0);
+
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // 2. 光源 (アニメ調の影を作るために必要)
-        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-        const light = new THREE.DirectionalLight(0xffffff, 1.5);
-        light.position.set(5, 10, 5);
-        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // トゥーン用影データ
-        const gradientMap = new THREE.DataTexture(new Uint8Array([0, 128, 255]), 3, 1, THREE.RedFormat);
-        gradientMap.needsUpdate = true;
-
-        // 3. モデル読み込みとマテリアルの引き継ぎ
-        let clickableObjects = [];
+        let columns = []; // 珠を列ごとに管理する配列
         const loader = new GLTFLoader();
+        
         loader.load('soroban.glb', (gltf) => {
-            const model = gltf.scene;
-            scene.add(model);
+            scene.add(gltf.scene);
+            
+            // 珠を列ごとに分類
+            gltf.scene.traverse(c => {
+                if(c.isMesh && c.morphTargetDictionary) {
+                    // X座標で列を判定
+                    const colKey = Math.round(c.position.x * 10); 
+                    if(!columns[colKey]) columns[colKey] = [];
+                    columns[colKey].push(c);
 
-            model.traverse(c => {
-                if (c.isMesh) {
-                    clickableObjects.push(c);
-                    
-                    // Blenderのマテリアル色とテクスチャを取得
-                    const oldMat = c.material;
-                    const color = oldMat.color ? oldMat.color.clone() : new THREE.Color(0xffffff);
-                    
-                    // アニメ調マテリアルへ置換（色はそのまま引き継ぐ）
-                    c.material = new THREE.MeshToonMaterial({
-                        color: color,
-                        map: oldMat.map,
-                        gradientMap: gradientMap
-                    });
-
-                    // 珠番号の設定
+                    // 珠の番号を名前から取得 (bead_1, bead_2...)
                     const match = c.name.match(/bead_(\d+)/);
                     if(match) c.userData.beadIndex = parseInt(match[1]);
                 }
             });
-            updateCamera(model);
+            // 空の要素を除去
+            columns = Object.values(columns);
         });
 
-        // 4. サイズ最適化
-        function updateCamera(model) {
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const aspect = window.innerWidth / window.innerHeight;
-            const frustumSize = Math.max(size.x, size.z) * 1.2;
-            
-            camera.left = -frustumSize * aspect / 2;
-            camera.right = frustumSize * aspect / 2;
-            camera.top = frustumSize / 2;
-            camera.bottom = -frustumSize / 2;
-            camera.near = -50; camera.far = 50;
-            camera.updateProjectionMatrix();
-        }
-
-        // 5. 連動操作ロジック
         const raycaster = new THREE.Raycaster();
-        const activePointers = new Map();
 
         window.addEventListener('pointerdown', (e) => {
             const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(clickableObjects, false);
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            
             if(intersects.length > 0) {
-                const m = intersects[0].object;
-                activePointers.set(e.pointerId, { mesh: m, startY: e.clientY, initial: getMeshState(m) });
+                const mesh = intersects[0].object;
+                if(mesh.userData.beadIndex !== undefined) {
+                    syncColumn(mesh);
+                }
             }
         });
 
-        window.addEventListener('pointermove', (e) => {
-            if(!activePointers.has(e.pointerId)) return;
-            const p = activePointers.get(e.pointerId);
-            const deltaY = e.clientY - p.startY;
-            const threshold = 30;
-            const target = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
-            
-            p.mesh.parent.traverse(s => {
-                if(s.isMesh && s.userData.beadIndex) {
-                    const val = (s.userData.beadIndex <= target) ? 1 : 0;
-                    Object.values(s.morphTargetDictionary).forEach(idx => {
-                        gsap.to(s.morphTargetInfluences, { [idx]: val, duration: 0.2 });
-                    });
-                }
-            });
-        });
+        function syncColumn(clickedMesh) {
+            // クリックした珠がどの列にあるか探す
+            const col = columns.find(list => list.includes(clickedMesh));
+            if(!col) return;
 
-        function getMeshState(m) {
-            const i = m.morphTargetInfluences;
-            if(!m.morphTargetDictionary) return 0;
-            const d = m.morphTargetDictionary;
-            if ('5' in d) return i[d['5']] > 0.5 ? 1 : 0;
-            for(let j=1; j<=4; j++) if(j.toString() in d && i[d[j.toString()]] > 0.5) return j;
-            return 0;
+            const targetIndex = clickedMesh.userData.beadIndex;
+            
+            // 同じ列の珠をすべて同期
+            col.forEach(bead => {
+                const dict = bead.morphTargetDictionary;
+                const infl = bead.morphTargetInfluences;
+                
+                // beadIndex が targetIndex 以下なら上げる(1)、そうでなければ下げる(0)
+                const targetValue = (bead.userData.beadIndex <= targetIndex) ? 1 : 0;
+                
+                Object.values(dict).forEach(idx => {
+                    gsap.to(infl, { [idx]: targetValue, duration: 0.2 });
+                });
+            });
         }
 
         function animate() {
