@@ -2,13 +2,10 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ARそろばん：フィジカル同期モード</title>
+    <title>3Dそろばん：連動スライド操作</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        /* 邪魔にならないようUIは最小限に */
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; color: #4a5568; pointer-events: none; }
     </style>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
@@ -16,77 +13,76 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
-    <div id="ui"><h1>物理そろばん同期モード</h1></div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // 1. シーンと2D正射影カメラの設定
         const scene = new THREE.Scene();
-        // ★ここを調整！実寸合わせの鍵：値を大きくすると珠が小さく、小さくすると珠が大きく表示
-        const frustumSize = 12; 
-        const aspect = window.innerWidth / window.innerHeight;
-        const camera = new THREE.OrthographicCamera(
-            (frustumSize * aspect) / -2, (frustumSize * aspect) / 2, 
-            frustumSize / 2, frustumSize / -2, 
-            0.1, 100
-        );
-        camera.position.set(0, 10, 0);
-        camera.lookAt(0, 0, 0);
+        const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
+        camera.position.set(0, 10, 0); camera.lookAt(0, 0, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 1.5)); // フラットで明るい表示
+        scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        
+        let clickableObjects = [];
+        const loader = new GLTFLoader();
 
-        const clickableObjects = [];
-        new GLTFLoader().load('soroban.glb', (gltf) => {
-            gltf.scene.traverse(c => { if(c.isMesh) clickableObjects.push(c); });
+        loader.load('soroban.glb', (gltf) => {
             scene.add(gltf.scene);
+            gltf.scene.traverse(c => {
+                if(c.isMesh && c.morphTargetDictionary) {
+                    // ★重要：Blenderでの命名規則から珠の番号を自動取得
+                    // 例: 珠の名前に "bead_1", "bead_2" 等が入っている想定
+                    const match = c.name.match(/bead_(\d+)/);
+                    if(match) c.userData.beadIndex = parseInt(match[1]);
+                    clickableObjects.push(c);
+                }
+            });
         });
 
-        // 2. マルチタッチ操作ロジック
-        const raycaster = new THREE.Raycaster();
-        const activePointers = new Map();
+        // ==========================================
+        // 連動操作ロジック
+        // ==========================================
+        function syncBeads(mesh, targetIndex) {
+            // このメッシュと同じ列にある他の珠も制御する必要があるため、
+            // 実際には「列」単位でメッシュを管理するのが一番スムーズです。
+            // ここでは簡易的に、同じ親を持つグループを探して連動させます。
+            const parent = mesh.parent;
+            parent.traverse(sibling => {
+                if (sibling.isMesh && sibling.morphTargetDictionary && sibling.userData.beadIndex) {
+                    const dict = sibling.morphTargetDictionary;
+                    const infl = sibling.morphTargetInfluences;
+                    
+                    // クリックした位置までを上げる(1)、それ以外を下げる(0)
+                    const targetValue = (sibling.userData.beadIndex <= targetIndex) ? 1 : 0;
+                    
+                    // すべてのシェイプキーをこのターゲット値に同期
+                    Object.values(dict).forEach(idx => {
+                        gsap.to(infl, { [idx]: targetValue, duration: 0.2, ease: "power2.out" });
+                    });
+                }
+            });
+        }
 
+        // ==========================================
+        // クリック操作
+        // ==========================================
+        const raycaster = new THREE.Raycaster();
         window.addEventListener('pointerdown', (e) => {
             const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(clickableObjects, false);
+            
             if (intersects.length > 0) {
-                activePointers.set(e.pointerId, {
-                    mesh: intersects[0].object,
-                    startY: e.clientY,
-                    initial: getMeshState(intersects[0].object)
-                });
+                const clickedMesh = intersects[0].object;
+                const index = clickedMesh.userData.beadIndex;
+                if(index) syncBeads(clickedMesh, index);
             }
         });
-
-        window.addEventListener('pointermove', (e) => {
-            if (!activePointers.has(e.pointerId)) return;
-            const p = activePointers.get(e.pointerId);
-            const deltaY = e.clientY - p.startY;
-            const threshold = 30; // 珠が動くまでのしきい値
-            const dict = p.mesh.morphTargetDictionary, infl = p.mesh.morphTargetInfluences;
-
-            if ('5' in dict) {
-                infl[dict['5']] = deltaY > threshold ? 1 : 0;
-            } else if ('1' in dict) {
-                let newState = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
-                for (let i = 1; i <= 4; i++) if (i.toString() in dict) infl[dict[i.toString()]] = (i === newState) ? 1 : 0;
-            }
-        });
-
-        window.addEventListener('pointerup', (e) => activePointers.delete(e.pointerId));
-
-        function getMeshState(m) {
-            const d = m.morphTargetDictionary, i = m.morphTargetInfluences;
-            if ('5' in d) return i[d['5']] > 0.5 ? 1 : 0;
-            for (let j = 1; j <= 4; j++) if (j.toString() in d && i[d[j.toString()]] > 0.5) return j;
-            return 0;
-        }
 
         function animate() {
             requestAnimationFrame(animate);
