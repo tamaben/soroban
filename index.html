@@ -1,90 +1,9 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3Dそろばんテスト</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #222; }
-        canvas { display: block; }
-        #info {
-            position: absolute;
-            top: 20px;
-            width: 100%;
-            text-align: center;
-            color: white;
-            font-family: sans-serif;
-            pointer-events: none;
-            text-shadow: 1px 1px 2px black;
-        }
-    </style>
-    <!-- Three.jsを読み込むためのImport Map -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
-    <!-- 滑らかなアニメーション用のライブラリ (GSAP) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
-</head>
-<body>
-    <div id="info">
-        <h3>3Dそろばん</h3>
-        <p>珠をクリックするとシェイプキーが動きます</p>
-    </div>
-
-    <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-        // 1. シーン、カメラ、レンダラーの準備
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 10, 15); // カメラの初期位置
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // マウスで視点操作できるようにする
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-
-        // 2. ライトの準備
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-        scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-        directionalLight.position.set(5, 10, 5);
-        scene.add(directionalLight);
-
-        // 3. そろばんモデル(glb)の読み込み
-        const loader = new GLTFLoader();
-        const clickableObjects =[]; // クリック判定用の配列
-
-        loader.load('soroban.glb', function (gltf) {
-            const model = gltf.scene;
-            scene.add(model);
-
-            // モデル内の全メッシュを調べて、クリック判定対象に入れる
-            model.traverse((child) => {
-                if (child.isMesh) {
-                    clickableObjects.push(child);
-                }
-            });
-        }, undefined, function (error) {
-            console.error('モデルの読み込みに失敗しました。ファイル名や場所を確認してください。', error);
-        });
-
-        // 4. クリック操作（Raycaster）の準備
+// 4. クリック操作（Raycaster）の準備
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
 
         window.addEventListener('click', (event) => {
-            // マウス座標を画面の中心を0,0とした -1 〜 +1 の範囲に変換
+            // マウス座標を変換
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -96,44 +15,51 @@
             if (intersects.length > 0) {
                 const clickedMesh = intersects[0].object;
 
-                // クリックされたメッシュがシェイプキー(morphTarget)を持っているか確認
-                if (clickedMesh.morphTargetInfluences && clickedMesh.morphTargetInfluences.length > 0) {
+                // クリックされたメッシュがシェイプキーを持っているか確認
+                if (clickedMesh.morphTargetDictionary) {
                     
-                    // ※仮に「最初のシェイプキー (インデックス0)」を動かす設定にしています
-                    const targetIndex = 0; 
-                    const currentValue = clickedMesh.morphTargetInfluences[targetIndex];
+                    // このメッシュが持っているシェイプキーの名前のリストを取得
+                    // 例: ['1', '2', '3'] や ['5'] など
+                    const shapeKeyNames = Object.keys(clickedMesh.morphTargetDictionary);
                     
-                    // 現在の値が0.5以上なら0に戻す、そうでなければ1にする（トグル動作）
-                    const targetValue = currentValue > 0.5 ? 0 : 1;
+                    if (shapeKeyNames.length > 0) {
+                        // どのシェイプキーを動かすか判定する
+                        let targetKeyName = null;
 
-                    // GSAPを使って 0.15秒 かけて滑らかにアニメーションさせる
-                    gsap.to(clickedMesh.morphTargetInfluences, {
-                        [targetIndex]: targetValue,
-                        duration: 0.15,
-                        ease: "power2.out"
-                    });
+                        // もし名前に "5" があれば、5の珠とみなす
+                        if (shapeKeyNames.includes('5')) {
+                            targetKeyName = '5';
+                        } 
+                        // もし名前に "1" があれば、1の珠とみなす
+                        else if (shapeKeyNames.includes('1')) {
+                            targetKeyName = '1';
+                        }
+                        // どちらもなければ、とりあえずリストの最初のシェイプキーを選ぶ
+                        else {
+                            targetKeyName = shapeKeyNames[0];
+                        }
 
-                    console.log(`動かしたオブジェクト: ${clickedMesh.name}, シェイプキーの値: ${targetValue}`);
+                        // 動かすシェイプキーのインデックス（配列の何番目か）を取得
+                        const targetIndex = clickedMesh.morphTargetDictionary[targetKeyName];
+                        
+                        // 現在の値を取得
+                        const currentValue = clickedMesh.morphTargetInfluences[targetIndex];
+                        
+                        // 現在の値が0.5以上なら 0 に戻す、そうでなければ 1 にする
+                        // （※glTF仕様に基づき、最大値は 1.0 として扱います）
+                        const targetValue = currentValue > 0.5 ? 0 : 1;
+
+                        // GSAPを使って滑らかにアニメーションさせる
+                        gsap.to(clickedMesh.morphTargetInfluences, {
+                            [targetIndex]: targetValue,
+                            duration: 0.15,
+                            ease: "power2.out"
+                        });
+
+                        console.log(`動かした珠: ${clickedMesh.name}, シェイプキー: ${targetKeyName}, 値を ${targetValue} に変更`);
+                    }
                 } else {
-                    console.log("クリックされたオブジェクトにはシェイプキーが設定されていません。");
+                    console.log("クリックされたオブジェクトにはシェイプキーがありません。");
                 }
             }
         });
-
-        // 5. ウィンドウサイズ変更対応
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        // 6. アニメーションループ
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update(); // 視点操作の更新
-            renderer.render(scene, camera);
-        }
-        animate();
-    </script>
-</body>
-</html>
