@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Perfect Fit Soroban</title>
+    <title>Fixed Soroban Control</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; }
@@ -18,9 +18,9 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        // 1. シーンとカメラの初期設定
+        // 1. シーンと正射影カメラの設定（ニア/ファーを広く設定）
         const scene = new THREE.Scene();
-        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+        const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
         camera.position.set(0, 10, 0);
         camera.lookAt(0, 0, 0);
 
@@ -31,57 +31,37 @@
 
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // 2. 画面サイズに合わせてカメラを自動調整する関数
-        const frustumSize = 15; // ここを調整するとそろばんの表示サイズが変わります
-        function updateCamera() {
-            const aspect = window.innerWidth / window.innerHeight;
-            const h = frustumSize / 2;
-            const w = h * aspect;
-            
-            camera.left = -w;
-            camera.right = w;
-            camera.top = h;
-            camera.bottom = -h;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
+        // レイキャスターの設定
+        const raycaster = new THREE.Raycaster();
         let clickableObjects = [];
+
+        // 2. モデルロード
         const loader = new GLTFLoader();
         loader.load('soroban.glb', (gltf) => {
             scene.add(gltf.scene);
             gltf.scene.traverse(c => {
-                if(c.isMesh && c.morphTargetDictionary) {
-                    // Blenderでの命名規則 bead_1, bead_2 ... に対応
+                if(c.isMesh) {
+                    clickableObjects.push(c);
+                    // 命名規則判定
                     const match = c.name.match(/bead_(\d+)/);
                     if(match) c.userData.beadIndex = parseInt(match[1]);
-                    clickableObjects.push(c);
                 }
             });
-            updateCamera(); // モデル読み込み後に初回調整
         });
 
-        // 3. 連動スライド操作ロジック
-        function syncBeads(mesh, targetIndex) {
-            const parent = mesh.parent;
-            parent.traverse(sibling => {
-                if (sibling.isMesh && sibling.userData.beadIndex) {
-                    const targetValue = (sibling.userData.beadIndex <= targetIndex) ? 1 : 0;
-                    Object.values(sibling.morphTargetDictionary).forEach(idx => {
-                        gsap.to(sibling.morphTargetInfluences, { [idx]: targetValue, duration: 0.2, ease: "power2.out" });
-                    });
-                }
-            });
-        }
-
-        // 4. マルチタッチ操作
-        const raycaster = new THREE.Raycaster();
+        // 3. 操作ロジックの修正
         const activePointers = new Map();
 
         window.addEventListener('pointerdown', (e) => {
-            const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+            // 正規化されたマウス座標をカメラに合わせる
+            const mouse = new THREE.Vector2(
+                (e.clientX / window.innerWidth) * 2 - 1,
+                -(e.clientY / window.innerHeight) * 2 + 1
+            );
+            
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(clickableObjects, false);
+            
             if (intersects.length > 0) {
                 activePointers.set(e.pointerId, {
                     mesh: intersects[0].object,
@@ -98,25 +78,38 @@
             const threshold = 30;
             const dict = p.mesh.morphTargetDictionary, infl = p.mesh.morphTargetInfluences;
 
-            if ('5' in dict) {
-                infl[dict['5']] = deltaY > threshold ? 1 : 0;
-            } else if ('1' in dict) {
-                let newState = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
-                syncBeads(p.mesh, newState);
+            if (dict) {
+                if ('5' in dict) {
+                    infl[dict['5']] = deltaY > threshold ? 1 : 0;
+                } else if ('1' in dict) {
+                    let newState = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
+                    syncBeads(p.mesh, newState);
+                }
             }
         });
 
         window.addEventListener('pointerup', (e) => activePointers.delete(e.pointerId));
 
+        // 珠の連動
+        function syncBeads(mesh, targetIndex) {
+            const parent = mesh.parent;
+            parent.traverse(sibling => {
+                if (sibling.isMesh && sibling.userData.beadIndex) {
+                    const targetValue = (sibling.userData.beadIndex <= targetIndex) ? 1 : 0;
+                    Object.values(sibling.morphTargetDictionary).forEach(idx => {
+                        gsap.to(sibling.morphTargetInfluences, { [idx]: targetValue, duration: 0.2 });
+                    });
+                }
+            });
+        }
+
         function getMeshState(m) {
             const d = m.morphTargetDictionary, i = m.morphTargetInfluences;
+            if (!d) return 0;
             if ('5' in d) return i[d['5']] > 0.5 ? 1 : 0;
             for (let j = 1; j <= 4; j++) if (j.toString() in d && i[d[j.toString()]] > 0.5) return j;
             return 0;
         }
-
-        // 5. リサイズ監視
-        window.addEventListener('resize', updateCamera);
 
         function animate() {
             requestAnimationFrame(animate);
