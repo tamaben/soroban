@@ -3,72 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>同期型 3Dそろばん (マルチタッチ対応)</title>
+    <title>ARそろばん：フィジカル同期モード</title>
     <style>
-        @font-face { font-family: 'ABACUS2'; src: url('ABACUS2.ttf') format('truetype'); }
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
-        #start-screen { position: absolute; z-index: 100; width: 100%; height: 100%; background: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        .mode-btn { font-size: 1.5rem; padding: 20px 40px; margin: 15px; border-radius: 12px; cursor: pointer; border: none; }
-        #network-panel { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; padding: 10px; z-index: 20; display: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        /* 邪魔にならないようUIは最小限に */
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; color: #4a5568; pointer-events: none; }
     </style>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
     </script>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
-    <div id="start-screen">
-        <button id="btn-main" class="mode-btn" style="background:#4299e1;color:white;">💻 先生（問題表示）</button>
-        <button id="btn-sub" class="mode-btn" style="background:#48bb78;color:white;">📱 生徒（そろばん操作）</button>
-    </div>
-    <div id="network-panel"><div id="status-text">通信準備中...</div><input id="target-id"><button id="connect-btn">接続</button></div>
-
+    <div id="ui"><h1>物理そろばん同期モード</h1></div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        let role = null, peer = null, connection = null;
-        const clickableObjects = [];
-        const activePointers = new Map(); // マルチタッチ用管理
-
-        // 初期化
+        // 1. シーンと2D正射影カメラの設定
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        // ★カメラ位置を画面サイズに応じて調整するロジック
-        function adjustCamera() {
-            const aspect = window.innerWidth / window.innerHeight;
-            camera.position.set(0, aspect > 1 ? 12 : 18, 0); // 横長なら近く、縦長なら遠く
-            camera.lookAt(0, 0, 0);
-        }
-        adjustCamera();
+        // ★ここを調整！実寸合わせの鍵：値を大きくすると珠が小さく、小さくすると珠が大きく表示
+        const frustumSize = 12; 
+        const aspect = window.innerWidth / window.innerHeight;
+        const camera = new THREE.OrthographicCamera(
+            (frustumSize * aspect) / -2, (frustumSize * aspect) / 2, 
+            frustumSize / 2, frustumSize / -2, 
+            0.1, 100
+        );
+        camera.position.set(0, 10, 0);
+        camera.lookAt(0, 0, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-        const light = new THREE.DirectionalLight(0xffffff, 1.2);
-        light.position.set(5, 10, 5);
-        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.5)); // フラットで明るい表示
 
-        // モデル読み込み
+        const clickableObjects = [];
         new GLTFLoader().load('soroban.glb', (gltf) => {
             gltf.scene.traverse(c => { if(c.isMesh) clickableObjects.push(c); });
             scene.add(gltf.scene);
         });
 
-        // ==========================================
-        // マルチタッチ操作ロジック
-        // ==========================================
+        // 2. マルチタッチ操作ロジック
         const raycaster = new THREE.Raycaster();
-        
+        const activePointers = new Map();
+
         window.addEventListener('pointerdown', (e) => {
-            if (role !== 'sub') return;
             const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(clickableObjects, false);
-            
             if (intersects.length > 0) {
                 activePointers.set(e.pointerId, {
                     mesh: intersects[0].object,
@@ -82,55 +68,25 @@
             if (!activePointers.has(e.pointerId)) return;
             const p = activePointers.get(e.pointerId);
             const deltaY = e.clientY - p.startY;
-            const threshold = 30; // 感度
-
+            const threshold = 30; // 珠が動くまでのしきい値
             const dict = p.mesh.morphTargetDictionary, infl = p.mesh.morphTargetInfluences;
+
             if ('5' in dict) {
                 infl[dict['5']] = deltaY > threshold ? 1 : 0;
             } else if ('1' in dict) {
                 let newState = Math.max(0, Math.min(4, p.initial - Math.floor(deltaY / threshold)));
                 for (let i = 1; i <= 4; i++) if (i.toString() in dict) infl[dict[i.toString()]] = (i === newState) ? 1 : 0;
             }
-            if (connection) connection.send({ type: 'sync', state: getBoardState() });
         });
 
         window.addEventListener('pointerup', (e) => activePointers.delete(e.pointerId));
 
-        // 補助関数
         function getMeshState(m) {
             const d = m.morphTargetDictionary, i = m.morphTargetInfluences;
             if ('5' in d) return i[d['5']] > 0.5 ? 1 : 0;
             for (let j = 1; j <= 4; j++) if (j.toString() in d && i[d[j.toString()]] > 0.5) return j;
             return 0;
         }
-
-        function getBoardState() {
-            const s = {};
-            clickableObjects.forEach((m, idx) => s[idx] = [...m.morphTargetInfluences]);
-            return s;
-        }
-
-        // 通信初期化（簡略化版）
-        document.getElementById('btn-main').onclick = () => {
-            role = 'main'; document.getElementById('start-screen').style.display = 'none';
-            document.getElementById('network-panel').style.display = 'block';
-            peer = new Peer();
-            peer.on('open', id => document.getElementById('status-text').innerText = "先生ID: " + id);
-            peer.on('connection', conn => {
-                connection = conn;
-                conn.on('data', d => {
-                    clickableObjects.forEach((m, idx) => m.morphTargetInfluences.set(d.state[idx]));
-                });
-            });
-        };
-
-        document.getElementById('btn-sub').onclick = () => {
-            role = 'sub'; document.getElementById('start-screen').style.display = 'none';
-            document.getElementById('network-panel').style.display = 'block';
-            document.getElementById('connect-btn').onclick = () => {
-                connection = new Peer().connect(document.getElementById('target-id').value);
-            };
-        };
 
         function animate() {
             requestAnimationFrame(animate);
