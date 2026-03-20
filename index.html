@@ -3,17 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Soroban Independent Beads</title>
+    <title>Physical Sync Soroban</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
+        /* キャリブレーション用スライダー */
+        #zoom-ui { position: absolute; bottom: 20px; left: 20px; z-index: 10; opacity: 0.5; }
     </style>
-    <script type="importmap">
-        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
-    </script>
+    <script src="https://unpkg.com/three@0.160.0/build/three.module.js" type="module"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
+    <div id="zoom-ui">
+        <input type="range" id="zoom" min="2" max="20" value="8" step="0.1">
+    </div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -26,66 +29,68 @@
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
+
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // 1. 列ごとに珠を管理する配列
-        let columns = []; 
         let clickableObjects = [];
-        const loader = new GLTFLoader();
+        let columns = [];
 
-        loader.load('soroban.glb', (gltf) => {
-            scene.add(gltf.scene);
-            const colMap = {};
+        new GLTFLoader().load('soroban.glb', (gltf) => {
+            const model = gltf.scene;
+            scene.add(model);
             
-            gltf.scene.traverse(c => {
-                if(c.isMesh && c.morphTargetDictionary) {
+            const colMap = {};
+            model.traverse(c => {
+                if(c.isMesh) {
                     clickableObjects.push(c);
-                    // 列を特定 (X座標で判定)
+                    // 【比率と色の維持】そのままのマテリアルを使う
+                    c.material = c.material.clone();
+                    
                     const colKey = Math.round(c.position.x * 10);
                     if(!colMap[colKey]) colMap[colKey] = [];
                     colMap[colKey].push(c);
-
-                    // 珠の属性をuserDataに保持
-                    // 名前から番号を抽出 (例: "bead_5" -> 5, "bead_3" -> 3)
-                    const match = c.name.match(/bead_(\d+)/);
-                    if(match) c.userData.targetState = parseInt(match[1]);
+                    
+                    if(c.morphTargetDictionary) {
+                        const keys = Object.keys(c.morphTargetDictionary);
+                        c.userData.beadValue = parseInt(keys[0]);
+                    }
                 }
             });
             columns = Object.values(colMap);
         });
 
-        // 2. 状態同期ロジック
-        function updateColumnState(clickedMesh, targetState) {
-            const col = columns.find(list => list.includes(clickedMesh));
-            if(!col) return;
-
-            col.forEach(bead => {
-                const dict = bead.morphTargetDictionary;
-                const infl = bead.morphTargetInfluences;
-                if(!dict) return;
-
-                // 各珠のターゲット番号と一致するキーだけを最大(1)にし、他を(0)にする
-                const myState = bead.userData.targetState;
-                if(myState !== undefined) {
-                    const targetVal = (myState === targetState) ? 1 : 0;
-                    const idx = dict[myState.toString()];
-                    if(idx !== undefined) {
-                        gsap.to(infl, { [idx]: targetVal, duration: 0.2, ease: "power2.out" });
-                    }
-                }
-            });
+        const zoomInput = document.getElementById('zoom');
+        function updateCamera() {
+            const aspect = window.innerWidth / window.innerHeight;
+            const frustum = parseFloat(zoomInput.value);
+            camera.left = -frustum * aspect / 2; camera.right = frustum * aspect / 2;
+            camera.top = frustum / 2; camera.bottom = -frustum / 2;
+            camera.updateProjectionMatrix();
         }
+        zoomInput.addEventListener('input', updateCamera);
+        window.addEventListener('resize', updateCamera);
+        updateCamera();
 
-        // 3. 操作
         const raycaster = new THREE.Raycaster();
         window.addEventListener('pointerdown', (e) => {
             const mouse = new THREE.Vector2((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
             raycaster.setFromCamera(mouse, camera);
             const inter = raycaster.intersectObjects(clickableObjects, false);
             if(inter.length > 0) {
-                const m = inter[0].object;
-                if(m.userData.targetState !== undefined) {
-                    updateColumnState(m, m.userData.targetState);
+                const mesh = inter[0].object;
+                const col = columns.find(list => list.includes(mesh));
+                if(col && mesh.userData.beadValue !== undefined) {
+                    const clickedVal = mesh.userData.beadValue;
+                    col.forEach(bead => {
+                        const dict = bead.morphTargetDictionary;
+                        if(dict) {
+                            const val = bead.userData.beadValue;
+                            const target = (val <= clickedVal) ? 1 : 0;
+                            Object.values(dict).forEach(idx => {
+                                gsap.to(bead.morphTargetInfluences, { [idx]: target, duration: 0.2 });
+                            });
+                        }
+                    });
                 }
             }
         });
