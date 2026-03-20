@@ -2,11 +2,11 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Soroban Robust Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Top-Down Soroban</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f4f8; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        #debug { position: absolute; top: 10px; left: 10px; color: red; pointer-events: none; }
     </style>
     <script type="importmap">
         { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
@@ -14,49 +14,59 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.4/gsap.min.js"></script>
 </head>
 <body>
-    <div id="debug"></div>
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+        // 1. 真上からのカメラ設定 (OrthographicCamera)
         const scene = new THREE.Scene();
+        // ニア/ファーを大きくして確実に見えるように設定
         const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, -100, 100);
-        camera.position.set(0, 10, 0);
-        camera.lookAt(0, 0, 0);
+        camera.position.set(0, 10, 0); // 真上
+        camera.lookAt(0, 0, 0);       // 下を見る
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        let columns = []; // 珠を列ごとに管理する配列
+        // 2. 列ごとの珠管理リスト
+        let columns = []; 
         const loader = new GLTFLoader();
         
         loader.load('soroban.glb', (gltf) => {
             scene.add(gltf.scene);
             
-            // 珠を列ごとに分類
+            // X座標で列を判別してグルーピング
+            const colMap = {};
             gltf.scene.traverse(c => {
                 if(c.isMesh && c.morphTargetDictionary) {
-                    // X座標で列を判定
-                    const colKey = Math.round(c.position.x * 10); 
-                    if(!columns[colKey]) columns[colKey] = [];
-                    columns[colKey].push(c);
+                    // X座標をキーにして列を特定 (精度を落として同じ列をまとめる)
+                    const colKey = Math.round(c.position.x * 5); 
+                    if(!colMap[colKey]) colMap[colKey] = [];
+                    colMap[colKey].push(c);
 
-                    // 珠の番号を名前から取得 (bead_1, bead_2...)
-                    const match = c.name.match(/bead_(\d+)/);
+                    // 珠の番号（下から1, 2, 3, 4）を名前に基づき判定
+                    // 「bead_1」や「1」という名前が含まれている前提
+                    const match = c.name.match(/(\d+)/);
                     if(match) c.userData.beadIndex = parseInt(match[1]);
                 }
             });
-            // 空の要素を除去
-            columns = Object.values(columns);
+            columns = Object.values(colMap);
         });
 
+        // 3. 操作ロジック (真上からのクリックを変換)
         const raycaster = new THREE.Raycaster();
-
+        
         window.addEventListener('pointerdown', (e) => {
-            const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+            // マウス座標を真上からの視点に合わせる
+            const mouse = new THREE.Vector2(
+                (e.clientX / window.innerWidth) * 2 - 1,
+                -(e.clientY / window.innerHeight) * 2 + 1
+            );
+            
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(scene.children, true);
             
@@ -69,23 +79,26 @@
         });
 
         function syncColumn(clickedMesh) {
-            // クリックした珠がどの列にあるか探す
+            // クリックされた珠がどの列にあるか探す
             const col = columns.find(list => list.includes(clickedMesh));
             if(!col) return;
 
             const targetIndex = clickedMesh.userData.beadIndex;
             
-            // 同じ列の珠をすべて同期
+            // その列の珠をすべて連動
             col.forEach(bead => {
-                const dict = bead.morphTargetDictionary;
-                const infl = bead.morphTargetInfluences;
-                
-                // beadIndex が targetIndex 以下なら上げる(1)、そうでなければ下げる(0)
-                const targetValue = (bead.userData.beadIndex <= targetIndex) ? 1 : 0;
-                
-                Object.values(dict).forEach(idx => {
-                    gsap.to(infl, { [idx]: targetValue, duration: 0.2 });
-                });
+                if(bead.morphTargetDictionary) {
+                    // targetIndex以下の珠は上げる(1)、以上は下げる(0)
+                    const targetValue = (bead.userData.beadIndex <= targetIndex) ? 1 : 0;
+                    
+                    Object.values(bead.morphTargetDictionary).forEach(idx => {
+                        gsap.to(bead.morphTargetInfluences, {
+                            [idx]: targetValue,
+                            duration: 0.2,
+                            ease: "power2.out"
+                        });
+                    });
+                }
             });
         }
 
